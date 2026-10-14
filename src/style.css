@@ -258,6 +258,39 @@ button.primary { background: rgba(110, 168, 255, 0.22); border-color: rgba(110, 
 }
 #readout b { color: var(--accent); font-weight: 600; }
 
+/* ------------------------------------------------------------------ Object tags */
+#labels {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+  pointer-events: none;
+}
+.object-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 1px 7px;
+  border-radius: 7px;
+  font: 11px/1.55 var(--mono);
+  white-space: nowrap;
+  color: #d7e3ff;
+  background: rgba(10, 16, 30, 0.42);
+  border: 1px solid rgba(140, 170, 255, 0.28);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s, background 0.15s;
+  will-change: transform;
+}
+.object-tag:hover { opacity: 1; background: rgba(110, 168, 255, 0.32); }
+.object-tag.planet { color: #9fe3ff; border-color: rgba(120, 210, 255, 0.4); }
+.object-tag.sun { color: #ffd36e; border-color: rgba(255, 200, 90, 0.5); }
+.object-tag.moon { color: #e6edff; border-color: rgba(205, 220, 255, 0.45); }
+.object-tag.below { opacity: 0.25; }
+
 /* ------------------------------------------------------------------ Loading */
 #loading {
   position: fixed;

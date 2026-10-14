@@ -712,6 +712,109 @@ function setupTouchZoom(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Object name tags (Sun / Moon / planets) overlaid on the sky
+// ---------------------------------------------------------------------------
+const PLANET_CN: Record<string, string> = {
+  Mercury: '水星',
+  Venus: '金星',
+  Earth: '地球',
+  Mars: '火星',
+  Jupiter: '木星',
+  Saturn: '土星',
+  Uranus: '天王星',
+  Neptune: '海王星',
+};
+
+interface ObjectTag {
+  objectId: string;
+  el: HTMLDivElement;
+}
+
+const objectTags: ObjectTag[] = [];
+
+function buildObjectTags(): void {
+  const container = $('labels');
+  container.replaceChildren();
+  objectTags.length = 0;
+
+  const add = (objectType: SolarSystemObjectType, objectId: string, label: string, cls: string) => {
+    const el = document.createElement('div');
+    el.className = `object-tag ${cls}`;
+    el.textContent = label;
+    el.addEventListener('click', () => focusObject(objectType, objectId));
+    container.appendChild(el);
+    objectTags.push({ objectId, el });
+  };
+
+  add('sun', 'sun', '☉ 太阳', 'sun');
+  add('moon', 'moon', '☾ 月亮', 'moon');
+  for (const planet of engine.solarSystem.planets.find()) {
+    add('planet', planet.id, PLANET_CN[planet.name] ?? planet.name, 'planet');
+  }
+}
+
+function updateObjectTags(): void {
+  const camera = engine.getCamera();
+  if (!camera) return;
+
+  const cam = camera.position;
+  const forward = camera.getWorldDirection(cam.clone());
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  for (const tag of objectTags) {
+    const info = engine.solarSystem.getObjectById(tag.objectId);
+    if (!info) {
+      tag.el.style.display = 'none';
+      continue;
+    }
+    const p = info.position;
+    const front = (p.x - cam.x) * forward.x + (p.y - cam.y) * forward.y + (p.z - cam.z) * forward.z;
+    if (front <= 0) {
+      tag.el.style.display = 'none';
+      continue;
+    }
+    const projected = cam.clone().set(p.x, p.y, p.z).project(camera);
+    const sx = (projected.x * 0.5 + 0.5) * width;
+    const sy = (-projected.y * 0.5 + 0.5) * height;
+    if (projected.z < -1 || projected.z > 1 || sx < -60 || sx > width + 60 || sy < -30 || sy > height + 30) {
+      tag.el.style.display = 'none';
+      continue;
+    }
+    tag.el.style.display = '';
+    tag.el.classList.toggle('below', (info.altitude ?? info.horizontal.altitude) <= 0);
+    tag.el.style.transform = `translate(${sx + 12}px, ${sy}px) translateY(-50%)`;
+  }
+}
+
+// Make the planet markers themselves stand out a bit more than stars.
+function enlargePlanets(): void {
+  const scene = engine.getContext()?.scene;
+  if (!scene) return;
+  scene.traverse((object: { name?: string; scale?: { setScalar: (v: number) => void } }) => {
+    if (typeof object.name === 'string' && object.name.startsWith('planet_') && object.scale) {
+      object.scale.setScalar(2.5);
+    }
+  });
+}
+
+// Give bright stars noticeably more intensity than faint ones (the engine
+// renders every star with the same brightness by default).
+function enhanceStarContrast(): void {
+  const bright: Array<string | number> = [];
+  const medium: Array<string | number> = [];
+  const faint: Array<string | number> = [];
+  for (const star of engine.solarSystem.stars.find()) {
+    if (star.magnitude <= 1.5) bright.push(star.id);
+    else if (star.magnitude <= 3) medium.push(star.id);
+    else faint.push(star.id);
+  }
+  if (bright.length) engine.solarSystem.star.update({ ids: bright, brightnessFactor: 4.5, sizeFactor: 1.35 });
+  if (medium.length) engine.solarSystem.star.update({ ids: medium, brightnessFactor: 2.1, sizeFactor: 1.1 });
+  if (faint.length) engine.solarSystem.star.update({ ids: faint, brightnessFactor: 1, sizeFactor: 0.85 });
+}
+
+// ---------------------------------------------------------------------------
 // Engine events
 // ---------------------------------------------------------------------------
 engine.on(EngineEvent.CLOCK_UPDATE, (p: ClockUpdatePayload) =>
@@ -747,6 +850,10 @@ async function boot(): Promise<void> {
   refreshObserverDisplay();
   setupTouchZoom();
 
+  enlargePlanets();
+  enhanceStarContrast();
+  buildObjectTags();
+
   const now = engine.clock.getDateTime();
   applyClockState(now, engine.clock.getSpeed(), engine.clock.isPlaying());
 
@@ -757,7 +864,9 @@ async function boot(): Promise<void> {
 
   window.setInterval(renderPlanets, 3000);
   window.setInterval(updateFocus, 250);
+  window.setInterval(updateObjectTags, 100);
   updateFocus();
+  updateObjectTags();
 
   $('loading').classList.add('hide');
   window.setTimeout(() => $('loading').remove(), 700);
