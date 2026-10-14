@@ -132,16 +132,33 @@ $<HTMLSelectElement>('observer-preset').addEventListener('change', (event) => {
 // ---------------------------------------------------------------------------
 // Display settings
 // ---------------------------------------------------------------------------
-const toggles: Array<[string, () => void]> = [
-  ['opt-milkyway', () => engine.scene.update({ showMilkyWay: $<HTMLInputElement>('opt-milkyway').checked })],
-  ['opt-cardinal', () => engine.scene.update({ showCardinalLabels: $<HTMLInputElement>('opt-cardinal').checked })],
-  ['opt-azimuth', () => engine.scene.update({ showAzimuthLines: $<HTMLInputElement>('opt-azimuth').checked })],
-  ['opt-altitude', () => engine.scene.update({ showAltitudeLines: $<HTMLInputElement>('opt-altitude').checked })],
-  ['opt-horizon', () => engine.scene.update({ showHorizonObjects: $<HTMLInputElement>('opt-horizon').checked })],
-];
-for (const [id, handler] of toggles) {
-  $<HTMLInputElement>(id).addEventListener('change', handler);
+const milkyWayCheck = $<HTMLInputElement>('opt-milkyway');
+const cardinalCheck = $<HTMLInputElement>('opt-cardinal');
+const azimuthCheck = $<HTMLInputElement>('opt-azimuth');
+const altitudeCheck = $<HTMLInputElement>('opt-altitude');
+const horizonCheck = $<HTMLInputElement>('opt-horizon');
+const atmosphereCheck = $<HTMLInputElement>('opt-atmosphere');
+
+let skyDome: { visible: boolean } | null = null;
+
+function applySceneToggles(): void {
+  engine.scene.update({
+    showMilkyWay: milkyWayCheck.checked,
+    showCardinalLabels: cardinalCheck.checked,
+    showAzimuthLines: azimuthCheck.checked,
+    showAltitudeLines: altitudeCheck.checked,
+    showHorizonObjects: horizonCheck.checked,
+  });
 }
+
+function applyAtmosphere(): void {
+  if (skyDome) skyDome.visible = atmosphereCheck.checked;
+}
+
+for (const check of [milkyWayCheck, cardinalCheck, azimuthCheck, altitudeCheck, horizonCheck]) {
+  check.addEventListener('change', applySceneToggles);
+}
+atmosphereCheck.addEventListener('change', applyAtmosphere);
 
 // ---------------------------------------------------------------------------
 // Constellation browser + auto focus (whichever constellation is centred)
@@ -476,7 +493,19 @@ function kv(label: string, value: string): HTMLElement {
   return row;
 }
 
-function showObjectInfo(objectType: SolarSystemObjectType, objectId: string | number): void {
+const OBJECT_TYPE_CN: Record<SolarSystemObjectType, string> = {
+  sun: '太阳',
+  moon: '月亮',
+  planet: '行星',
+  star: '恒星',
+  constellation: '星座',
+};
+
+function showObjectInfo(
+  objectType: SolarSystemObjectType,
+  objectId: string | number,
+  magnitudeHint?: number,
+): void {
   const info = engine.solarSystem.getObjectById(objectId);
   if (!info) return;
 
@@ -484,11 +513,13 @@ function showObjectInfo(objectType: SolarSystemObjectType, objectId: string | nu
   objectTitle.textContent = info.name ?? String(objectId);
 
   const rows: HTMLElement[] = [];
+  rows.push(kv('类型', OBJECT_TYPE_CN[objectType] ?? objectType));
   const alt = info.altitude ?? info.horizontal.altitude;
   const az = info.horizontal.azimuth;
   rows.push(kv('高度角', `${alt.toFixed(1)}°`));
   rows.push(kv('方位角', `${az.toFixed(1)}°`));
-  if (typeof info.magnitude === 'number') rows.push(kv('星等', info.magnitude.toFixed(2)));
+  const magnitude = typeof info.magnitude === 'number' ? info.magnitude : magnitudeHint;
+  if (typeof magnitude === 'number') rows.push(kv('星等', magnitude.toFixed(2)));
   rows.push(kv('赤经', `${(info.equatorial.ra / 15).toFixed(2)}h`));
   rows.push(kv('赤纬', `${info.equatorial.dec.toFixed(1)}°`));
 
@@ -509,13 +540,17 @@ function syncFollowButtons(): void {
 }
 
 /** Select (crosshair) + centre + start tracking an object. */
-function focusObject(objectType: SolarSystemObjectType, objectId: string | number): void {
+function focusObject(
+  objectType: SolarSystemObjectType,
+  objectId: string | number,
+  magnitudeHint?: number,
+): void {
   const ok = engine.camera.followObject({ objectType, objectId, animate: true, select: true });
   if (!ok) {
     engine.clearSelection();
     engine.camera.stopFollowingObject();
   }
-  showObjectInfo(objectType, objectId);
+  showObjectInfo(objectType, objectId, magnitudeHint);
 }
 
 function clearFocus(): void {
@@ -668,8 +703,13 @@ function formatClickReadout(data: ClickEventData): string {
   const raHours = data.equatorial.ra / 15;
   const dec = data.equatorial.dec;
   const target = data.object?.name ? `目标 <b>${data.object.name}</b> · ` : '';
+  const mag =
+    typeof data.object?.magnitude === 'number'
+      ? `星等 <b>${data.object.magnitude.toFixed(2)}</b> · `
+      : '';
   return (
     target +
+    mag +
     `赤经 <b>${raHours.toFixed(2)}h</b> · 赤纬 <b>${dec.toFixed(1)}°</b> · ` +
     `高度 <b>${data.horizontal.altitude.toFixed(1)}°</b> · 方位 <b>${data.horizontal.azimuth.toFixed(1)}°</b>`
   );
@@ -859,7 +899,7 @@ engine.on(EngineEvent.SCENE_CLICKED, (data: ClickEventData) => {
   readoutEl.innerHTML = formatClickReadout(data);
   readoutEl.classList.remove('hidden');
   if (data.object?.type) {
-    focusObject(data.object.type, data.object.id);
+    focusObject(data.object.type, data.object.id, data.object.magnitude);
   } else {
     clearFocus();
   }
@@ -879,6 +919,10 @@ async function boot(): Promise<void> {
   renderPlanets();
   refreshObserverDisplay();
   setupTouchZoom();
+
+  skyDome = engine.getContext()?.scene?.getObjectByName('skyDome') ?? null;
+  applySceneToggles();
+  applyAtmosphere();
 
   enlargePlanets();
   enhanceStarContrast();
