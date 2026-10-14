@@ -499,35 +499,50 @@ function showObjectInfo(objectType: SolarSystemObjectType, objectId: string | nu
 
   objectBody.replaceChildren(...rows);
   objectInfo.classList.remove('hidden');
-  followBtn.classList.remove('hidden');
-  unfollowBtn.classList.add('hidden');
+  syncFollowButtons();
+}
+
+function syncFollowButtons(): void {
+  const following = Boolean(engine.camera.getFollowTarget());
+  followBtn.classList.toggle('hidden', following);
+  unfollowBtn.classList.toggle('hidden', !following);
+}
+
+/** Select (crosshair) + centre + start tracking an object. */
+function focusObject(objectType: SolarSystemObjectType, objectId: string | number): void {
+  const ok = engine.camera.followObject({ objectType, objectId, animate: true, select: true });
+  if (!ok) {
+    engine.clearSelection();
+    engine.camera.stopFollowingObject();
+  }
+  showObjectInfo(objectType, objectId);
+}
+
+function clearFocus(): void {
+  engine.clearSelection();
+  engine.camera.stopFollowingObject();
+  objectInfo.classList.add('hidden');
+  tracked = null;
 }
 
 function selectAndCenter(objectType: SolarSystemObjectType, objectId: string | number): void {
   if (objectType === 'constellation') {
     manualConstellations.add(String(objectId));
     reconcileConstellations();
-  } else {
-    engine.selection.clearSelectedObjects();
-    engine.selection.selectObject({ objectType, objectId });
   }
-  engine.camera.centerOnObject({ objectType, objectId, animate: true });
-  showObjectInfo(objectType, objectId);
+  focusObject(objectType, objectId);
 }
 
 followBtn.addEventListener('click', () => {
   if (!tracked) return;
-  const ok = engine.camera.followObject({ ...tracked, animate: true, select: true });
-  if (ok) {
-    followBtn.classList.add('hidden');
-    unfollowBtn.classList.remove('hidden');
-  }
+  focusObject(tracked.objectType, tracked.objectId);
 });
 unfollowBtn.addEventListener('click', () => {
   engine.camera.stopFollowingObject();
-  followBtn.classList.remove('hidden');
-  unfollowBtn.classList.add('hidden');
+  syncFollowButtons();
 });
+
+engine.on(EngineEvent.FOLLOW_TARGET_CHANGED, () => syncFollowButtons());
 
 // ---------------------------------------------------------------------------
 // Search (stars / constellations / planets)
@@ -711,7 +726,9 @@ engine.on(EngineEvent.SCENE_CLICKED, (data: ClickEventData) => {
   readoutEl.innerHTML = formatClickReadout(data);
   readoutEl.classList.remove('hidden');
   if (data.object?.type) {
-    showObjectInfo(data.object.type, data.object.id);
+    focusObject(data.object.type, data.object.id);
+  } else {
+    clearFocus();
   }
 });
 
