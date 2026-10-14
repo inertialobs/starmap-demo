@@ -1,4 +1,5 @@
 import { PlanetariumEngine, EngineEvent } from '@tracing-the-sky/engine';
+import * as THREE from 'three';
 import type {
   ClockUpdatePayload,
   ClickEventData,
@@ -138,8 +139,12 @@ const azimuthCheck = $<HTMLInputElement>('opt-azimuth');
 const altitudeCheck = $<HTMLInputElement>('opt-altitude');
 const horizonCheck = $<HTMLInputElement>('opt-horizon');
 const atmosphereCheck = $<HTMLInputElement>('opt-atmosphere');
+const eclipticCheck = $<HTMLInputElement>('opt-ecliptic');
 
 let skyDome: { visible: boolean } | null = null;
+let altitudeBelowGroup: any | null = null;
+let azimuthBelowGroup: any | null = null;
+let eclipticGroup: any | null = null;
 
 function applySceneToggles(): void {
   engine.scene.update({
@@ -149,16 +154,156 @@ function applySceneToggles(): void {
     showAltitudeLines: altitudeCheck.checked,
     showHorizonObjects: horizonCheck.checked,
   });
+  // The engine only draws the upper hemisphere; fill in the lower half when
+  // the ground is hidden so the grid becomes a complete sphere.
+  const showBelow = !horizonCheck.checked;
+  if (altitudeBelowGroup) altitudeBelowGroup.visible = showBelow && altitudeCheck.checked;
+  if (azimuthBelowGroup) azimuthBelowGroup.visible = showBelow && azimuthCheck.checked;
+  if (eclipticGroup) eclipticGroup.visible = eclipticCheck.checked;
 }
 
 function applyAtmosphere(): void {
   if (skyDome) skyDome.visible = atmosphereCheck.checked;
 }
 
-for (const check of [milkyWayCheck, cardinalCheck, azimuthCheck, altitudeCheck, horizonCheck]) {
+for (const check of [milkyWayCheck, cardinalCheck, azimuthCheck, altitudeCheck, horizonCheck, eclipticCheck]) {
   check.addEventListener('change', applySceneToggles);
 }
 atmosphereCheck.addEventListener('change', applyAtmosphere);
+
+// ---------------------------------------------------------------------------
+// Sky reference grids: below-horizon extension + ecliptic coordinate grid
+// ---------------------------------------------------------------------------
+const SKY_RADIUS = 500;
+const OBLIQUITY = (23.4393 * Math.PI) / 180;
+
+function skyLine(points: any[], material: unknown, closed: boolean): any {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const line = closed
+    ? new THREE.LineLoop(geometry, material)
+    : new THREE.Line(geometry, material);
+  line.renderOrder = 118;
+  line.isPickable = false;
+  return line;
+}
+
+function renderOrderSafe(group: any): any {
+  group.renderOrder = 118;
+  group.isPickable = false;
+  return group;
+}
+
+function buildBelowHorizonGrid(): { altitude: any; azimuth: any } {
+  const toXyz = (altDeg: number, azDeg: number) => {
+    const a = (altDeg * Math.PI) / 180;
+    const z = (azDeg * Math.PI) / 180;
+    return new THREE.Vector3(
+      SKY_RADIUS * Math.cos(a) * Math.sin(z),
+      SKY_RADIUS * Math.sin(a),
+      SKY_RADIUS * Math.cos(a) * Math.cos(z),
+    );
+  };
+
+  const ringMat = new THREE.LineBasicMaterial({
+    color: 0xc9c7ff,
+    transparent: true,
+    opacity: 0.3,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const spokeMat = new THREE.LineBasicMaterial({
+    color: 0xa8b6ff,
+    transparent: true,
+    opacity: 0.22,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const altitude = renderOrderSafe(new THREE.Group());
+  for (let alt = -80; alt <= -10; alt += 10) {
+    const pts: any[] = [];
+    for (let az = 0; az < 360; az += 5) pts.push(toXyz(alt, az));
+    altitude.add(skyLine(pts, ringMat, true));
+  }
+  const nadir: any[] = [];
+  for (let az = 0; az < 360; az += 6) nadir.push(toXyz(-89, az));
+  altitude.add(skyLine(nadir, ringMat, true));
+
+  const azimuth = renderOrderSafe(new THREE.Group());
+  for (let az = 0; az < 360; az += 10) {
+    const pts: any[] = [];
+    for (let alt = 0; alt >= -90; alt -= 3) pts.push(toXyz(alt, az));
+    azimuth.add(skyLine(pts, spokeMat, false));
+  }
+
+  return { altitude, azimuth };
+}
+
+function eclipticToLocal(lambdaDeg: number, betaDeg: number): any {
+  const l = (lambdaDeg * Math.PI) / 180;
+  const b = (betaDeg * Math.PI) / 180;
+  const ex = Math.cos(b) * Math.cos(l);
+  const ey = Math.cos(b) * Math.sin(l);
+  const ez = Math.sin(b);
+  const ce = Math.cos(OBLIQUITY);
+  const se = Math.sin(OBLIQUITY);
+  const qx = ex;
+  const qy = ey * ce - ez * se;
+  const qz = ey * se + ez * ce;
+  // Map to the engine's celestial-sphere convention: x = cosδ·sinα, y = sinδ, z = cosδ·cosα
+  return new THREE.Vector3(qy, qz, qx).multiplyScalar(SKY_RADIUS);
+}
+
+function buildEclipticGrid(): any {
+  const group = renderOrderSafe(new THREE.Group());
+  const equatorMat = new THREE.LineBasicMaterial({
+    color: 0xffb454,
+    transparent: true,
+    opacity: 0.7,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const faintMat = new THREE.LineBasicMaterial({
+    color: 0xb98bff,
+    transparent: true,
+    opacity: 0.28,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const equator: any[] = [];
+  for (let l = 0; l < 360; l += 3) equator.push(eclipticToLocal(l, 0));
+  group.add(skyLine(equator, equatorMat, true));
+
+  for (const beta of [-60, -30, 30, 60]) {
+    const pts: any[] = [];
+    for (let l = 0; l <= 360; l += 4) pts.push(eclipticToLocal(l, beta));
+    group.add(skyLine(pts, faintMat, true));
+  }
+  for (let l = 0; l < 360; l += 30) {
+    const pts: any[] = [];
+    for (let b = -80; b <= 80; b += 4) pts.push(eclipticToLocal(l, b));
+    group.add(skyLine(pts, faintMat, false));
+  }
+  return group;
+}
+
+function buildSkyGrids(): void {
+  const scene = engine.getContext()?.scene;
+  const sphere = scene?.getObjectByName('celestialSphere');
+  if (!scene) return;
+
+  const below = buildBelowHorizonGrid();
+  scene.add(below.altitude);
+  scene.add(below.azimuth);
+  altitudeBelowGroup = below.altitude;
+  azimuthBelowGroup = below.azimuth;
+
+  if (sphere) {
+    eclipticGroup = buildEclipticGrid();
+    sphere.add(eclipticGroup);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Constellation browser + auto focus (whichever constellation is centred)
@@ -945,6 +1090,7 @@ async function boot(): Promise<void> {
   setupTouchZoom();
 
   skyDome = engine.getContext()?.scene?.getObjectByName('skyDome') ?? null;
+  buildSkyGrids();
   applySceneToggles();
   applyAtmosphere();
 
