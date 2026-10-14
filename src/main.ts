@@ -320,7 +320,6 @@ function renderPlanets(): void {
   planetList.replaceChildren(
     ...planets.map((p) => {
       const li = document.createElement('li');
-      li.style.cursor = 'default';
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = p.name;
@@ -329,6 +328,7 @@ function renderPlanets(): void {
       tag.className = `tag ${alt > 0 ? 'up' : 'down'}`;
       tag.textContent = `${alt.toFixed(1)}°`;
       li.append(name, tag);
+      li.addEventListener('click', () => selectAndCenter('planet', p.name));
       return li;
     }),
   );
@@ -501,36 +501,63 @@ const OBJECT_TYPE_CN: Record<SolarSystemObjectType, string> = {
   constellation: '星座',
 };
 
-function showObjectInfo(
-  objectType: SolarSystemObjectType,
-  objectId: string | number,
-  magnitudeHint?: number,
-): void {
-  const info = engine.solarSystem.getObjectById(objectId);
+let objectInfoMagnitudeHint: number | undefined;
+let cachedRiseSet: RiseSetRow | null = null;
+let cachedRiseSetKey = '';
+
+function riseSetCacheKey(objectType: SolarSystemObjectType, objectId: string | number): string {
+  const d = engine.clock.getDateTime();
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}|${objectType}|${objectId}`;
+}
+
+function ensureObjectRiseSet(objectType: SolarSystemObjectType, objectId: string | number): RiseSetRow {
+  const key = riseSetCacheKey(objectType, objectId);
+  if (!cachedRiseSet || cachedRiseSetKey !== key) {
+    cachedRiseSet = computeRiseSet(objectType, objectId, '');
+    cachedRiseSetKey = key;
+  }
+  return cachedRiseSet;
+}
+
+function renderObjectInfo(): void {
+  if (!tracked || objectInfo.classList.contains('hidden')) return;
+  const info = engine.solarSystem.getObjectById(tracked.objectId);
   if (!info) return;
 
-  tracked = { objectType, objectId };
+  const { objectType, objectId } = tracked;
   objectTitle.textContent = info.name ?? String(objectId);
 
   const rows: HTMLElement[] = [];
   rows.push(kv('类型', OBJECT_TYPE_CN[objectType] ?? objectType));
   const alt = info.altitude ?? info.horizontal.altitude;
-  const az = info.horizontal.azimuth;
   rows.push(kv('高度角', `${alt.toFixed(1)}°`));
-  rows.push(kv('方位角', `${az.toFixed(1)}°`));
-  const magnitude = typeof info.magnitude === 'number' ? info.magnitude : magnitudeHint;
+  rows.push(kv('方位角', `${info.horizontal.azimuth.toFixed(1)}°`));
+  const magnitude = typeof info.magnitude === 'number' ? info.magnitude : objectInfoMagnitudeHint;
   if (typeof magnitude === 'number') rows.push(kv('星等', magnitude.toFixed(2)));
   rows.push(kv('赤经', `${(info.equatorial.ra / 15).toFixed(2)}h`));
   rows.push(kv('赤纬', `${info.equatorial.dec.toFixed(1)}°`));
 
-  const rs = computeRiseSet(objectType, objectId, info.name ?? String(objectId));
+  const rs = ensureObjectRiseSet(objectType, objectId);
   rows.push(kv('升', formatHM(rs.rise)));
   rows.push(kv('中天', formatHM(rs.transit)));
   rows.push(kv('落', formatHM(rs.set)));
 
   objectBody.replaceChildren(...rows);
+}
+
+function showObjectInfo(
+  objectType: SolarSystemObjectType,
+  objectId: string | number,
+  magnitudeHint?: number,
+): void {
+  if (!engine.solarSystem.getObjectById(objectId)) return;
+  tracked = { objectType, objectId };
+  objectInfoMagnitudeHint = magnitudeHint;
+  cachedRiseSet = null;
+  cachedRiseSetKey = '';
   objectInfo.classList.remove('hidden');
   syncFollowButtons();
+  renderObjectInfo();
 }
 
 function syncFollowButtons(): void {
@@ -639,7 +666,7 @@ function runSearch(query: string): void {
       label: p.name,
       sub: '太阳系',
       objectType: 'planet' as const,
-      objectId: p.id,
+      objectId: p.name,
     })),
   ];
 
@@ -658,12 +685,6 @@ function runSearch(query: string): void {
   );
   searchResults.classList.toggle('hidden', searchItems.length === 0);
   setActiveSearchIndex(0);
-
-  // Auto-select when the query confidently matches the top hit (e.g. "mars").
-  const top = searchItems[0];
-  if (top && q.length >= 2 && top.label.toLowerCase().startsWith(q.toLowerCase())) {
-    selectAndCenter(top.objectType, top.objectId);
-  }
 }
 
 let searchTimer = 0;
@@ -819,7 +840,7 @@ function buildObjectTags(): void {
   add('sun', 'sun', '☉ 太阳', 'sun');
   add('moon', 'moon', '☾ 月亮', 'moon');
   for (const planet of engine.solarSystem.planets.find()) {
-    add('planet', planet.id, PLANET_CN[planet.name] ?? planet.name, 'planet');
+    add('planet', planet.name, PLANET_CN[planet.name] ?? planet.name, 'planet');
   }
 }
 
@@ -894,6 +915,9 @@ engine.on(EngineEvent.CLOCK_PLAY_UPDATE, (p) =>
 engine.on(EngineEvent.OBSERVER_CHANGED, () => {
   refreshObserverDisplay();
   refreshRiseSet(true);
+  cachedRiseSet = null;
+  cachedRiseSetKey = '';
+  renderObjectInfo();
 });
 engine.on(EngineEvent.SCENE_CLICKED, (data: ClickEventData) => {
   readoutEl.innerHTML = formatClickReadout(data);
@@ -939,6 +963,7 @@ async function boot(): Promise<void> {
   window.setInterval(renderPlanets, 3000);
   window.setInterval(updateFocus, 250);
   window.setInterval(updateObjectTags, 100);
+  window.setInterval(renderObjectInfo, 500);
   updateFocus();
   updateObjectTags();
 
