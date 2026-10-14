@@ -1094,6 +1094,14 @@ function enhanceStarContrast(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Layout: keep overlays clear of the (possibly wrapping) bottom bar
+// ---------------------------------------------------------------------------
+function syncBottombarHeight(): void {
+  const bar = $('bottombar');
+  document.documentElement.style.setProperty('--bottombar-h', `${bar.offsetHeight}px`);
+}
+
+// ---------------------------------------------------------------------------
 // Engine events
 // ---------------------------------------------------------------------------
 engine.on(EngineEvent.CLOCK_UPDATE, (p: ClockUpdatePayload) =>
@@ -1132,6 +1140,9 @@ async function boot(): Promise<void> {
   refreshObserverDisplay();
   setupTouchZoom();
   setupPinchIsolation();
+
+  new ResizeObserver(syncBottombarHeight).observe($('bottombar'));
+  syncBottombarHeight();
 
   skyDome = engine.getContext()?.scene?.getObjectByName('skyDome') ?? null;
   buildSkyGrids();

@@ -11,6 +11,7 @@
   --sans: system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --z-ui: 10050;
   --z-pop: 10100;
+  --bottombar-h: 56px;
   color-scheme: dark;
 }
 
@@ -228,14 +229,23 @@ button.primary { background: rgba(110, 168, 255, 0.22); border-color: rgba(110, 
 .sidebar-actions { margin-top: 8px; display: flex; gap: 8px; }
 
 /* ------------------------------------------------------------------ Object info */
-#object-info { left: 16px; bottom: 76px; width: 300px; max-height: 60vh; }
+#object-info { left: 16px; bottom: calc(var(--bottombar-h, 56px) + 22px); width: 300px; max-height: 60vh; }
 #object-body .kv { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 13px; }
 #object-body .kv span { color: var(--text-dim); }
 #object-body .kv strong { font-family: var(--mono); font-weight: 600; color: #eaf0ff; }
 .object-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* ------------------------------------------------------------------ Bottom bar */
-#bottombar { bottom: 0; border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; overflow-x: auto; }
+#bottombar {
+  bottom: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 6px;
+}
 #bottombar .group { flex: none; }
 #time-input { flex: none; color-scheme: dark; }
 #observer-preset { flex: none; }
@@ -244,7 +254,7 @@ button.primary { background: rgba(110, 168, 255, 0.22); border-color: rgba(110, 
 #readout {
   position: fixed;
   z-index: var(--z-ui);
-  bottom: 62px;
+  bottom: calc(var(--bottombar-h, 56px) + 8px);
   left: 50%;
   transform: translateX(-50%);
   padding: 7px 14px;
@@ -312,6 +322,22 @@ button.primary { background: rgba(110, 168, 255, 0.22); border-color: rgba(110, 
   .side.left { left: 8px; }
   .side.right { right: 8px; }
   #object-info { left: 8px; right: 8px; width: auto; }
-  #bottombar { gap: 6px; padding: 6px 8px; }
-  .panel { max-height: calc(100vh - 140px); }
+  .panel { max-height: calc(100vh - 180px); }
+
+  #bottombar {
+    gap: 6px;
+    padding: 6px 8px;
+    justify-content: center;
+    row-gap: 6px;
+  }
+  /* keep the most-used controls on the first row so nothing is off-screen */
+  #bottombar > #btn-play { order: 1; }
+  #bottombar > #speeds { order: 2; }
+  #bottombar > #btn-now { order: 3; }
+  #bottombar > .group:not(#speeds) { order: 4; }
+  #bottombar > #time-input { order: 5; }
+  #bottombar > #observer-preset { order: 6; }
+  #bottombar button,
+  #bottombar select,
+  #bottombar .group button { padding: 6px 8px; font-size: 12px; }
 }
