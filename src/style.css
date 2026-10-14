@@ -301,6 +301,40 @@ button.primary { background: rgba(110, 168, 255, 0.22); border-color: rgba(110, 
 .object-tag.moon { color: #e6edff; border-color: rgba(205, 220, 255, 0.45); }
 .object-tag.below { opacity: 0.25; }
 
+/* ------------------------------------------------------------------ Constellation labels
+   Override the engine's opaque tag (injected at runtime) with transparent,
+   borderless text. Higher specificity (body ...) so we win regardless of the
+   engine's stylesheet being appended later. */
+body .constellation-label-root {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 4px;
+  color: #eaf0ff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+body .constellation-label-close {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  font-size: 13px;
+  line-height: 16px;
+  color: rgba(200, 211, 236, 0.55);
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+body .constellation-label-root:hover .constellation-label-close { opacity: 1; }
+body .constellation-label-close:hover {
+  color: #ff8a8a;
+  background: rgba(255, 120, 120, 0.16);
+}
+
 /* ------------------------------------------------------------------ Loading */
 #loading {
   position: fixed;
