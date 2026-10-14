@@ -947,6 +947,44 @@ function setupTouchZoom(): void {
   canvas.addEventListener('touchcancel', reset, { passive: true });
 }
 
+/**
+ * OrbitControls keeps its single-finger ROTATE state when a second finger
+ * lands (two-finger dolly/pan is disabled), and rotates around the average of
+ * both pointers — which makes the view drift while pinching. Block its pointer
+ * events for the whole gesture once two touch pointers are active.
+ */
+function setupPinchIsolation(): void {
+  const activeTouches = new Set<number>();
+  const isCanvasTouch = (event: PointerEvent) =>
+    event.pointerType === 'touch' && event.target === canvas;
+
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!isCanvasTouch(event)) return;
+      activeTouches.add(event.pointerId);
+      if (activeTouches.size >= 2) event.stopImmediatePropagation();
+    },
+    true,
+  );
+
+  window.addEventListener(
+    'pointermove',
+    (event) => {
+      if (!isCanvasTouch(event)) return;
+      if (activeTouches.size >= 2) event.stopImmediatePropagation();
+    },
+    true,
+  );
+
+  const release = (event: PointerEvent) => {
+    if (event.pointerType !== 'touch') return;
+    activeTouches.delete(event.pointerId);
+  };
+  window.addEventListener('pointerup', release, true);
+  window.addEventListener('pointercancel', release, true);
+}
+
 // ---------------------------------------------------------------------------
 // Object name tags (Sun / Moon / planets) overlaid on the sky
 // ---------------------------------------------------------------------------
@@ -1088,6 +1126,7 @@ async function boot(): Promise<void> {
   renderPlanets();
   refreshObserverDisplay();
   setupTouchZoom();
+  setupPinchIsolation();
 
   skyDome = engine.getContext()?.scene?.getObjectByName('skyDome') ?? null;
   buildSkyGrids();
