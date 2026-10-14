@@ -558,6 +558,23 @@ interface SearchItem {
 const searchInput = $<HTMLInputElement>('search-input');
 const searchResults = $<HTMLUListElement>('search-results');
 let searchItems: SearchItem[] = [];
+let activeSearchIndex = 0;
+
+function setActiveSearchIndex(index: number): void {
+  if (searchItems.length === 0) return;
+  activeSearchIndex = (index + searchItems.length) % searchItems.length;
+  Array.from(searchResults.children).forEach((child, i) => {
+    child.classList.toggle('active', i === activeSearchIndex);
+  });
+  searchResults.children[activeSearchIndex]?.scrollIntoView({ block: 'nearest' });
+}
+
+function commitSearch(item: SearchItem): void {
+  selectAndCenter(item.objectType, item.objectId);
+  searchResults.classList.add('hidden');
+  searchInput.value = item.label;
+  searchItems = [];
+}
 
 function runSearch(query: string): void {
   const q = query.trim();
@@ -592,7 +609,7 @@ function runSearch(query: string): void {
   ];
 
   searchResults.replaceChildren(
-    ...searchItems.map((item, index) => {
+    ...searchItems.map((item) => {
       const li = document.createElement('li');
       const left = document.createElement('span');
       left.textContent = item.label;
@@ -600,16 +617,18 @@ function runSearch(query: string): void {
       tag.className = 'kind';
       tag.textContent = `${item.kind} · ${item.sub}`;
       li.append(left, tag);
-      li.addEventListener('click', () => {
-        selectAndCenter(item.objectType, item.objectId);
-        searchResults.classList.add('hidden');
-        searchInput.value = item.label;
-      });
-      li.dataset.index = String(index);
+      li.addEventListener('click', () => commitSearch(item));
       return li;
     }),
   );
   searchResults.classList.toggle('hidden', searchItems.length === 0);
+  setActiveSearchIndex(0);
+
+  // Auto-select when the query confidently matches the top hit (e.g. "mars").
+  const top = searchItems[0];
+  if (top && q.length >= 2 && top.label.toLowerCase().startsWith(q.toLowerCase())) {
+    selectAndCenter(top.objectType, top.objectId);
+  }
 }
 
 let searchTimer = 0;
@@ -619,11 +638,22 @@ searchInput.addEventListener('input', () => {
   searchTimer = window.setTimeout(() => runSearch(value), 150);
 });
 searchInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && searchItems.length > 0) {
-    selectAndCenter(searchItems[0].objectType, searchItems[0].objectId);
+  if (searchItems.length === 0) {
+    if (event.key === 'Escape') searchResults.classList.add('hidden');
+    return;
+  }
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    setActiveSearchIndex(activeSearchIndex + 1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    setActiveSearchIndex(activeSearchIndex - 1);
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    commitSearch(searchItems[activeSearchIndex] ?? searchItems[0]);
+  } else if (event.key === 'Escape') {
     searchResults.classList.add('hidden');
   }
-  if (event.key === 'Escape') searchResults.classList.add('hidden');
 });
 document.addEventListener('click', (event) => {
   if (!searchResults.contains(event.target as Node) && event.target !== searchInput) {
