@@ -4,17 +4,27 @@ import type {
   ClickEventData,
   ConstellationSearchResult,
   ObserverLocation,
+  SolarSystemObjectType,
 } from '@tracing-the-sky/engine';
 import './style.css';
 
 // ---------------------------------------------------------------------------
-// DOM helpers
+// Small helpers
 // ---------------------------------------------------------------------------
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
   return el as T;
 };
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const formatDateTime = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+  `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const formatHM = (d: Date | null) => (d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '—');
+const toInputValue = (d: Date) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T` +
+  `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
 // ---------------------------------------------------------------------------
 // Observer presets
@@ -51,7 +61,7 @@ const engine = new PlanetariumEngine({
 });
 
 // ---------------------------------------------------------------------------
-// Time UI
+// Clock / time controls  (single render path => works while paused too)
 // ---------------------------------------------------------------------------
 const SPEEDS: Array<{ label: string; value: number }> = [
   { label: '1×', value: 1 },
@@ -67,6 +77,7 @@ const simTimeEl = $('sim-time');
 const observerLabelEl = $('observer-label');
 const observerCoordsEl = $('observer-coords');
 const readoutEl = $('readout');
+const timeInput = $<HTMLInputElement>('time-input');
 const speedButtons = new Map<number, HTMLButtonElement>();
 
 for (const { label, value } of SPEEDS) {
@@ -78,20 +89,18 @@ for (const { label, value } of SPEEDS) {
   speedButtons.set(value, btn);
 }
 
-function formatDateTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-  );
-}
+let knownRiseSetDateKey = '';
 
-function refreshTimeDisplay(date: Date, speed: number, isPlaying: boolean): void {
+function applyClockState(date: Date, speed: number, isPlaying: boolean): void {
   simTimeEl.textContent = formatDateTime(date);
-  playBtn.textContent = isPlaying ? '⏸ 暂停' : '▶ 播放';
+  playBtn.textContent = isPlaying ? '⏸' : '▶';
   for (const [value, btn] of speedButtons) {
     btn.classList.toggle('active', value === speed);
   }
+  if (document.activeElement !== timeInput) {
+    timeInput.value = toInputValue(date);
+  }
+  maybeRefreshRiseSet();
 }
 
 function refreshObserverDisplay(): void {
@@ -105,6 +114,16 @@ function refreshObserverDisplay(): void {
 
 playBtn.addEventListener('click', () => engine.clock.toggle());
 nowBtn.addEventListener('click', () => engine.clock.set(new Date()));
+timeInput.addEventListener('change', () => {
+  const value = new Date(timeInput.value);
+  if (!Number.isNaN(value.getTime())) engine.clock.set(value);
+});
+
+for (const btn of $('bottombar').querySelectorAll<HTMLButtonElement>('[data-step]')) {
+  const step = Number(btn.dataset.step);
+  btn.addEventListener('click', () => engine.clock.addMilliseconds(step));
+}
+
 $<HTMLSelectElement>('observer-preset').addEventListener('change', (event) => {
   const preset = PRESETS[(event.target as HTMLSelectElement).value];
   if (preset) engine.observer.update(preset.location);
@@ -125,12 +144,16 @@ for (const [id, handler] of toggles) {
 }
 
 // ---------------------------------------------------------------------------
-// Constellation browser
+// Constellation browser + auto focus (whichever constellation is centred)
 // ---------------------------------------------------------------------------
 const constellationSearch = $<HTMLInputElement>('constellation-search');
 const constellationList = $<HTMLUListElement>('constellation-list');
-const visibleConstellations = new Set<string>();
+const autoConstellationCheckbox = $<HTMLInputElement>('opt-autoconstellation');
 
+const manualConstellations = new Set<string>();
+let focusedConstellation: string | null = null;
+let appliedConstellations = new Set<string>();
+let autoConstellation = true;
 let allConstellations: ConstellationSearchResult[] = [];
 
 function renderConstellations(query = ''): void {
@@ -144,16 +167,15 @@ function renderConstellations(query = ''): void {
   constellationList.replaceChildren(
     ...items.map((c) => {
       const li = document.createElement('li');
-      li.classList.toggle('active', visibleConstellations.has(c.id));
-
+      li.classList.toggle('active', appliedConstellations.has(c.id));
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = c.nativeName ? `${c.name} · ${c.nativeName}` : c.name;
-
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = c.id;
-
+      const isFocused = c.id === focusedConstellation;
+      tag.textContent = isFocused ? '聚焦' : c.id;
+      if (isFocused) tag.classList.add('up');
       li.append(name, tag);
       li.addEventListener('click', () => toggleConstellation(c.id));
       return li;
@@ -161,22 +183,114 @@ function renderConstellations(query = ''): void {
   );
 }
 
-function toggleConstellation(id: string): void {
-  if (visibleConstellations.has(id)) {
-    engine.solarSystem.constellations.hide({ id });
-    visibleConstellations.delete(id);
-  } else {
-    engine.solarSystem.constellations.show({ id, showLabel: true, allowClose: true });
-    visibleConstellations.add(id);
+function reconcileConstellations(): void {
+  const desired = new Set(manualConstellations);
+  if (focusedConstellation) desired.add(focusedConstellation);
+
+  for (const id of appliedConstellations) {
+    if (!desired.has(id)) engine.solarSystem.constellations.hide({ id });
   }
+  for (const id of desired) {
+    if (!appliedConstellations.has(id)) {
+      engine.solarSystem.constellations.show({ id, showLabel: true, allowClose: true });
+    }
+  }
+  appliedConstellations = desired;
   renderConstellations(constellationSearch.value);
+}
+
+function toggleConstellation(id: string): void {
+  if (manualConstellations.has(id)) manualConstellations.delete(id);
+  else manualConstellations.add(id);
+  reconcileConstellations();
 }
 
 constellationSearch.addEventListener('input', () => renderConstellations(constellationSearch.value));
 $('btn-hide-constellations').addEventListener('click', () => {
-  engine.solarSystem.constellations.hideAll();
-  visibleConstellations.clear();
-  renderConstellations(constellationSearch.value);
+  manualConstellations.clear();
+  focusedConstellation = null;
+  reconcileConstellations();
+});
+
+// --- Auto focus detection ------------------------------------------------
+interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+function rotateByQuat(v: Vec3, q: { x: number; y: number; z: number; w: number }): Vec3 {
+  const tx = 2 * (q.y * v.z - q.z * v.y);
+  const ty = 2 * (q.z * v.x - q.x * v.z);
+  const tz = 2 * (q.x * v.y - q.y * v.x);
+  return {
+    x: v.x + q.w * tx + (q.y * tz - q.z * ty),
+    y: v.y + q.w * ty + (q.z * tx - q.x * tz),
+    z: v.z + q.w * tz + (q.x * ty - q.y * tx),
+  };
+}
+
+const FOCUS_ENTER_DEG = 22;
+const FOCUS_EXIT_DEG = 28;
+
+let focusTargets: Array<{ id: string; dir: Vec3 }> = [];
+let celestialSphere: { quaternion: { x: number; y: number; z: number; w: number } } | null = null;
+
+function buildFocusTargets(): void {
+  focusTargets = allConstellations.flatMap((c) => {
+    const eq = engine.solarSystem.getObjectById(c.id)?.equatorial;
+    if (!eq) return [];
+    const ra = (eq.ra * Math.PI) / 180;
+    const dec = (eq.dec * Math.PI) / 180;
+    return [{
+      id: c.id,
+      dir: { x: Math.cos(dec) * Math.sin(ra), y: Math.sin(dec), z: Math.cos(dec) * Math.cos(ra) },
+    }];
+  });
+}
+
+function updateFocus(): void {
+  if (!autoConstellation || !celestialSphere || focusTargets.length === 0) return;
+  const camera = engine.getCamera();
+  if (!camera) return;
+
+  const forward = rotateByQuat({ x: 0, y: 0, z: -1 }, camera.quaternion);
+  const q = celestialSphere.quaternion;
+
+  let bestId: string | null = null;
+  let bestAngle = Infinity;
+  let focusedAngle = Infinity;
+
+  for (const target of focusTargets) {
+    const dir = rotateByQuat(target.dir, q);
+    const dot = Math.min(1, Math.max(-1, forward.x * dir.x + forward.y * dir.y + forward.z * dir.z));
+    const angle = (Math.acos(dot) * 180) / Math.PI;
+    if (angle < bestAngle) {
+      bestAngle = angle;
+      bestId = target.id;
+    }
+    if (target.id === focusedConstellation) focusedAngle = angle;
+  }
+
+  let next: string | null = focusedConstellation;
+  if (focusedConstellation && focusedAngle <= FOCUS_EXIT_DEG) {
+    if (bestId && bestId !== focusedConstellation && bestAngle < focusedAngle - 5) next = bestId;
+  } else {
+    next = bestId && bestAngle <= FOCUS_ENTER_DEG ? bestId : null;
+  }
+
+  if (next !== focusedConstellation) {
+    focusedConstellation = next;
+    reconcileConstellations();
+  }
+}
+
+autoConstellationCheckbox.addEventListener('change', () => {
+  autoConstellation = autoConstellationCheckbox.checked;
+  if (!autoConstellation && focusedConstellation) {
+    focusedConstellation = null;
+    reconcileConstellations();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -190,16 +304,13 @@ function renderPlanets(): void {
     ...planets.map((p) => {
       const li = document.createElement('li');
       li.style.cursor = 'default';
-
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = p.name;
-
       const alt = p.altitude ?? 0;
       const tag = document.createElement('span');
       tag.className = `tag ${alt > 0 ? 'up' : 'down'}`;
       tag.textContent = `${alt.toFixed(1)}°`;
-
       li.append(name, tag);
       return li;
     }),
@@ -207,39 +318,401 @@ function renderPlanets(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Click readout (equatorial / horizontal coordinates)
+// Rise / transit / set computation
+// ---------------------------------------------------------------------------
+interface RiseSetRow {
+  name: string;
+  rise: Date | null;
+  transit: Date | null;
+  set: Date | null;
+  currentAlt: number | null;
+  maxAlt: number;
+}
+
+const REF = (objectType: SolarSystemObjectType, objectId: string | number) =>
+  ({ objectType, objectId });
+
+function altitudeAt(objectType: SolarSystemObjectType, objectId: string | number, t: number): number | null {
+  const { altitude } = engine.solarSystem.aboveHorizon({ ...REF(objectType, objectId), time: new Date(t) });
+  return altitude ?? null;
+}
+
+function refineCrossing(objectType: SolarSystemObjectType, objectId: string | number, from: number, to: number): Date {
+  let last = altitudeAt(objectType, objectId, from);
+  for (let t = from + 60_000; t <= to; t += 60_000) {
+    const cur = altitudeAt(objectType, objectId, t);
+    if (last !== null && cur !== null && (last <= 0) !== (cur <= 0)) return new Date(t);
+    last = cur;
+  }
+  return new Date(to);
+}
+
+function computeRiseSet(objectType: SolarSystemObjectType, objectId: string | number, name: string): RiseSetRow {
+  const ref = engine.clock.getDateTime();
+  const start = new Date(ref);
+  start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  const endMs = startMs + 24 * 3600_000;
+  const coarse = 15 * 60_000;
+
+  let prevAlt: number | null = null;
+  let prevT = startMs;
+  let rise: Date | null = null;
+  let set: Date | null = null;
+  let maxAlt = -90;
+  let transitT = startMs;
+
+  for (let t = startMs; t <= endMs; t += coarse) {
+    const alt = altitudeAt(objectType, objectId, t);
+    if (alt === null) {
+      prevAlt = null;
+      continue;
+    }
+    if (alt > maxAlt) {
+      maxAlt = alt;
+      transitT = t;
+    }
+    if (prevAlt !== null) {
+      if (prevAlt <= 0 && alt > 0 && rise === null) rise = refineCrossing(objectType, objectId, prevT, t);
+      if (prevAlt > 0 && alt <= 0 && set === null) set = refineCrossing(objectType, objectId, prevT, t);
+    }
+    prevAlt = alt;
+    prevT = t;
+  }
+
+  let transit: Date | null = null;
+  if (maxAlt > 0) {
+    let best = -90;
+    for (let t = transitT - coarse; t <= transitT + coarse; t += 60_000) {
+      const alt = altitudeAt(objectType, objectId, t);
+      if (alt !== null && alt > best) {
+        best = alt;
+        transit = new Date(t);
+      }
+    }
+  }
+
+  const currentAlt = altitudeAt(objectType, objectId, ref.getTime());
+  return { name, rise, transit, set, currentAlt, maxAlt };
+}
+
+const risesetBody = $('riseset-body');
+let riseSetToken = 0;
+let riseSetBusy = false;
+let riseSetLastAt = 0;
+
+function renderRiseSet(rows: RiseSetRow[]): void {
+  risesetBody.replaceChildren(
+    ...rows.map((r) => {
+      const tr = document.createElement('tr');
+      if ((r.currentAlt ?? -1) > 0) tr.classList.add('up');
+      const name = document.createElement('td');
+      name.className = 'name';
+      name.textContent = r.name;
+      const cells = [r.rise, r.transit, r.set].map((d) => {
+        const td = document.createElement('td');
+        td.textContent = formatHM(d);
+        return td;
+      });
+      tr.append(name, ...cells);
+      return tr;
+    }),
+  );
+}
+
+function refreshRiseSet(force = false): void {
+  if ($('panel-info').classList.contains('hidden')) return;
+
+  const date = engine.clock.getDateTime();
+  const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  if (!force && key === knownRiseSetDateKey) return;
+  if (riseSetBusy) return;
+
+  knownRiseSetDateKey = key;
+  riseSetBusy = true;
+  riseSetLastAt = Date.now();
+  const token = ++riseSetToken;
+  risesetBody.innerHTML = '<tr><td colspan="4" class="muted">计算中…</td></tr>';
+
+  const targets: Array<{ type: SolarSystemObjectType; id: string; name: string }> = [
+    { type: 'sun', id: 'sun', name: '太阳' },
+    { type: 'moon', id: 'moon', name: '月亮' },
+    ...engine.solarSystem.planets.find().map((p) => ({ type: 'planet' as const, id: p.id, name: p.name })),
+  ];
+
+  window.setTimeout(() => {
+    const rows = targets.map((t) => computeRiseSet(t.type, t.id, t.name));
+    riseSetBusy = false;
+    if (token !== riseSetToken) return;
+    renderRiseSet(rows);
+  }, 0);
+}
+
+function maybeRefreshRiseSet(): void {
+  if (Date.now() - riseSetLastAt < 1500) return;
+  const date = engine.clock.getDateTime();
+  const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  if (key !== knownRiseSetDateKey) refreshRiseSet();
+}
+
+// ---------------------------------------------------------------------------
+// Object info (click / search)
+// ---------------------------------------------------------------------------
+const objectInfo = $('object-info');
+const objectTitle = $('object-title');
+const objectBody = $('object-body');
+const followBtn = $<HTMLButtonElement>('btn-follow');
+const unfollowBtn = $<HTMLButtonElement>('btn-unfollow');
+let tracked: { objectType: SolarSystemObjectType; objectId: string | number } | null = null;
+
+function kv(label: string, value: string): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'kv';
+  const l = document.createElement('span');
+  l.textContent = label;
+  const v = document.createElement('strong');
+  v.textContent = value;
+  row.append(l, v);
+  return row;
+}
+
+function showObjectInfo(objectType: SolarSystemObjectType, objectId: string | number): void {
+  const info = engine.solarSystem.getObjectById(objectId);
+  if (!info) return;
+
+  tracked = { objectType, objectId };
+  objectTitle.textContent = info.name ?? String(objectId);
+
+  const rows: HTMLElement[] = [];
+  const alt = info.altitude ?? info.horizontal.altitude;
+  const az = info.horizontal.azimuth;
+  rows.push(kv('高度角', `${alt.toFixed(1)}°`));
+  rows.push(kv('方位角', `${az.toFixed(1)}°`));
+  if (typeof info.magnitude === 'number') rows.push(kv('星等', info.magnitude.toFixed(2)));
+  rows.push(kv('赤经', `${(info.equatorial.ra / 15).toFixed(2)}h`));
+  rows.push(kv('赤纬', `${info.equatorial.dec.toFixed(1)}°`));
+
+  const rs = computeRiseSet(objectType, objectId, info.name ?? String(objectId));
+  rows.push(kv('升', formatHM(rs.rise)));
+  rows.push(kv('中天', formatHM(rs.transit)));
+  rows.push(kv('落', formatHM(rs.set)));
+
+  objectBody.replaceChildren(...rows);
+  objectInfo.classList.remove('hidden');
+  followBtn.classList.remove('hidden');
+  unfollowBtn.classList.add('hidden');
+}
+
+function selectAndCenter(objectType: SolarSystemObjectType, objectId: string | number): void {
+  if (objectType === 'constellation') {
+    manualConstellations.add(String(objectId));
+    reconcileConstellations();
+  } else {
+    engine.selection.clearSelectedObjects();
+    engine.selection.selectObject({ objectType, objectId });
+  }
+  engine.camera.centerOnObject({ objectType, objectId, animate: true });
+  showObjectInfo(objectType, objectId);
+}
+
+followBtn.addEventListener('click', () => {
+  if (!tracked) return;
+  const ok = engine.camera.followObject({ ...tracked, animate: true, select: true });
+  if (ok) {
+    followBtn.classList.add('hidden');
+    unfollowBtn.classList.remove('hidden');
+  }
+});
+unfollowBtn.addEventListener('click', () => {
+  engine.camera.stopFollowingObject();
+  followBtn.classList.remove('hidden');
+  unfollowBtn.classList.add('hidden');
+});
+
+// ---------------------------------------------------------------------------
+// Search (stars / constellations / planets)
+// ---------------------------------------------------------------------------
+interface SearchItem {
+  kind: string;
+  label: string;
+  sub: string;
+  objectType: SolarSystemObjectType;
+  objectId: string | number;
+}
+
+const searchInput = $<HTMLInputElement>('search-input');
+const searchResults = $<HTMLUListElement>('search-results');
+let searchItems: SearchItem[] = [];
+
+function runSearch(query: string): void {
+  const q = query.trim();
+  if (!q) {
+    searchResults.classList.add('hidden');
+    searchItems = [];
+    return;
+  }
+
+  searchItems = [
+    ...engine.solarSystem.stars.find({ query: q, limit: 6 }).map((s) => ({
+      kind: '恒星',
+      label: s.name,
+      sub: `${s.magnitude.toFixed(1)} 等`,
+      objectType: 'star' as const,
+      objectId: s.id,
+    })),
+    ...engine.solarSystem.constellations.find({ query: q, limit: 5 }).map((c) => ({
+      kind: '星座',
+      label: c.name,
+      sub: c.nativeName ?? c.id,
+      objectType: 'constellation' as const,
+      objectId: c.id,
+    })),
+    ...engine.solarSystem.planets.find({ query: q, limit: 5 }).map((p) => ({
+      kind: '行星',
+      label: p.name,
+      sub: '太阳系',
+      objectType: 'planet' as const,
+      objectId: p.id,
+    })),
+  ];
+
+  searchResults.replaceChildren(
+    ...searchItems.map((item, index) => {
+      const li = document.createElement('li');
+      const left = document.createElement('span');
+      left.textContent = item.label;
+      const tag = document.createElement('span');
+      tag.className = 'kind';
+      tag.textContent = `${item.kind} · ${item.sub}`;
+      li.append(left, tag);
+      li.addEventListener('click', () => {
+        selectAndCenter(item.objectType, item.objectId);
+        searchResults.classList.add('hidden');
+        searchInput.value = item.label;
+      });
+      li.dataset.index = String(index);
+      return li;
+    }),
+  );
+  searchResults.classList.toggle('hidden', searchItems.length === 0);
+}
+
+let searchTimer = 0;
+searchInput.addEventListener('input', () => {
+  window.clearTimeout(searchTimer);
+  const value = searchInput.value;
+  searchTimer = window.setTimeout(() => runSearch(value), 150);
+});
+searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && searchItems.length > 0) {
+    selectAndCenter(searchItems[0].objectType, searchItems[0].objectId);
+    searchResults.classList.add('hidden');
+  }
+  if (event.key === 'Escape') searchResults.classList.add('hidden');
+});
+document.addEventListener('click', (event) => {
+  if (!searchResults.contains(event.target as Node) && event.target !== searchInput) {
+    searchResults.classList.add('hidden');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Click readout
 // ---------------------------------------------------------------------------
 function formatClickReadout(data: ClickEventData): string {
   const raHours = data.equatorial.ra / 15;
   const dec = data.equatorial.dec;
-  const decLabel = `${Math.abs(dec).toFixed(1)}°${dec >= 0 ? 'N' : 'S'}`;
-  const alt = data.horizontal.altitude;
-  const az = data.horizontal.azimuth;
   const target = data.object?.name ? `目标 <b>${data.object.name}</b> · ` : '';
   return (
     target +
-    `赤经 <b>${raHours.toFixed(2)}h</b> · 赤纬 <b>${decLabel}</b> · ` +
-    `高度 <b>${alt.toFixed(1)}°</b> · 方位 <b>${az.toFixed(1)}°</b>`
+    `赤经 <b>${raHours.toFixed(2)}h</b> · 赤纬 <b>${dec.toFixed(1)}°</b> · ` +
+    `高度 <b>${data.horizontal.altitude.toFixed(1)}°</b> · 方位 <b>${data.horizontal.azimuth.toFixed(1)}°</b>`
   );
 }
 
 // ---------------------------------------------------------------------------
-// Wire engine events
+// Panel toggles
 // ---------------------------------------------------------------------------
+const panelInfo = $('panel-info');
+const panelView = $('panel-view');
+const toggleInfoBtn = $<HTMLButtonElement>('toggle-info');
+const toggleViewBtn = $<HTMLButtonElement>('toggle-view');
 
-engine.on(EngineEvent.CLOCK_UPDATE, (payload: ClockUpdatePayload) => {
-  refreshTimeDisplay(payload.dateTime, payload.speed, payload.isPlaying);
+function setPanel(panel: HTMLElement, btn: HTMLButtonElement, open: boolean): void {
+  panel.classList.toggle('hidden', !open);
+  btn.classList.toggle('active', open);
+  if (panel === panelInfo && open) refreshRiseSet(true);
+}
+
+toggleInfoBtn.addEventListener('click', () =>
+  setPanel(panelInfo, toggleInfoBtn, panelInfo.classList.contains('hidden')));
+toggleViewBtn.addEventListener('click', () =>
+  setPanel(panelView, toggleViewBtn, panelView.classList.contains('hidden')));
+
+for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-close]')) {
+  btn.addEventListener('click', () => {
+    const panel = document.getElementById(btn.dataset.close ?? '');
+    if (!panel) return;
+    if (panel === panelInfo) setPanel(panelInfo, toggleInfoBtn, false);
+    else if (panel === panelView) setPanel(panelView, toggleViewBtn, false);
+    else panel.classList.add('hidden');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Touch gestures: two-finger pinch => FOV zoom (desktop uses wheel)
+// ---------------------------------------------------------------------------
+function touchDistance(touches: TouchList): number {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function setupTouchZoom(): void {
+  let startDistance = 0;
+  let startFov = 65;
+
+  canvas.addEventListener('touchstart', (event) => {
+    if (event.touches.length === 2) {
+      startDistance = touchDistance(event.touches);
+      startFov = engine.getCamera()?.fov ?? 65;
+    }
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', (event) => {
+    if (event.touches.length !== 2 || startDistance <= 0) return;
+    event.preventDefault();
+    const camera = engine.getCamera();
+    if (!camera) return;
+    const scale = touchDistance(event.touches) / startDistance;
+    camera.fov = Math.min(100, Math.max(20, startFov / scale));
+    camera.updateProjectionMatrix();
+  }, { passive: false });
+
+  const reset = (event: TouchEvent) => {
+    if (event.touches.length < 2) startDistance = 0;
+  };
+  canvas.addEventListener('touchend', reset, { passive: true });
+  canvas.addEventListener('touchcancel', reset, { passive: true });
+}
+
+// ---------------------------------------------------------------------------
+// Engine events
+// ---------------------------------------------------------------------------
+engine.on(EngineEvent.CLOCK_UPDATE, (p: ClockUpdatePayload) =>
+  applyClockState(p.dateTime, p.speed, p.isPlaying));
+engine.on(EngineEvent.CLOCK_PLAY_UPDATE, (p) =>
+  applyClockState(p.dateTime, p.speed, p.isPlaying));
+engine.on(EngineEvent.OBSERVER_CHANGED, () => {
+  refreshObserverDisplay();
+  refreshRiseSet(true);
 });
-
-engine.on(EngineEvent.CLOCK_PLAY_UPDATE, (payload) => {
-  playBtn.textContent = payload.isPlaying ? '⏸ 暂停' : '▶ 播放';
-});
-
-engine.on(EngineEvent.OBSERVER_CHANGED, () => refreshObserverDisplay());
-
 engine.on(EngineEvent.SCENE_CLICKED, (data: ClickEventData) => {
   readoutEl.innerHTML = formatClickReadout(data);
   readoutEl.classList.remove('hidden');
+  if (data.object?.type) {
+    showObjectInfo(data.object.type, data.object.id);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -250,20 +723,27 @@ async function boot(): Promise<void> {
   engine.start();
 
   allConstellations = engine.solarSystem.constellations.find();
+  celestialSphere = engine.getContext()?.scene?.getObjectByName('celestialSphere') ?? null;
+  buildFocusTargets();
   renderConstellations();
   renderPlanets();
   refreshObserverDisplay();
+  setupTouchZoom();
 
   const now = engine.clock.getDateTime();
-  refreshTimeDisplay(now, engine.clock.getSpeed(), engine.clock.isPlaying());
+  applyClockState(now, engine.clock.getSpeed(), engine.clock.isPlaying());
+
+  const desktop = window.innerWidth > 760;
+  setPanel(panelInfo, toggleInfoBtn, desktop);
+  setPanel(panelView, toggleViewBtn, desktop);
+  if (desktop) refreshRiseSet(true);
 
   window.setInterval(renderPlanets, 3000);
+  window.setInterval(updateFocus, 250);
+  updateFocus();
 
   $('loading').classList.add('hide');
   window.setTimeout(() => $('loading').remove(), 700);
-
-  // 默认展示一个明显的星座，让示例开箱可见
-  toggleConstellation('UMa');
 }
 
 void boot();

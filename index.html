@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>实时星图 · Real-time Star Map</title>
 </head>
 <body>
@@ -10,42 +10,94 @@
 
   <div id="loading">正在初始化星图…</div>
 
-  <!-- 左上：时间与观测者信息 -->
-  <section id="info" class="panel">
-    <h1>实时星图</h1>
-    <div class="row"><span>模拟时间</span><strong id="sim-time">--</strong></div>
-    <div class="row"><span>观测地点</span><strong id="observer-label">--</strong></div>
-    <div class="row"><span>经纬度</span><span id="observer-coords">--</span></div>
-  </section>
+  <!-- 顶部工具栏 -->
+  <header id="topbar" class="bar">
+    <div class="brand">✦ 实时星图</div>
 
-  <!-- 右上：显示设置 -->
-  <section id="settings" class="panel">
-    <h2>显示设置</h2>
+    <div class="search">
+      <input id="search-input" type="search" autocomplete="off"
+             placeholder="搜索天体 / 星座（如 Mars、Orion、Vega）" />
+      <ul id="search-results" class="hidden"></ul>
+    </div>
+
+    <div class="actions">
+      <button id="toggle-info" class="icon-btn" title="信息面板">ℹ</button>
+      <button id="toggle-view" class="icon-btn" title="显示设置">⚙</button>
+    </div>
+  </header>
+
+  <!-- 左侧：信息 / 升落时间 -->
+  <aside id="panel-info" class="panel side left">
+    <div class="panel-head">
+      <h2>观测信息</h2>
+      <button class="close-btn" data-close="panel-info">✕</button>
+    </div>
+
+    <div class="status-grid">
+      <div><span>模拟时间</span><strong id="sim-time">--</strong></div>
+      <div><span>观测地点</span><strong id="observer-label">--</strong></div>
+      <div><span>坐标</span><strong id="observer-coords">--</strong></div>
+    </div>
+
+    <h3>天体升落 <small>（本地时间）</small></h3>
+    <table id="riseset-table">
+      <thead><tr><th>天体</th><th>升</th><th>中天</th><th>落</th></tr></thead>
+      <tbody id="riseset-body"><tr><td colspan="4" class="muted">计算中…</td></tr></tbody>
+    </table>
+    <p class="hint">“—” 表示该时段内不可见或始终在地平线上。</p>
+  </aside>
+
+  <!-- 右侧：显示设置 + 星座浏览 + 行星 -->
+  <aside id="panel-view" class="panel side right">
+    <div class="panel-head">
+      <h2>显示设置</h2>
+      <button class="close-btn" data-close="panel-view">✕</button>
+    </div>
     <label class="check"><input type="checkbox" id="opt-milkyway" checked /> 银河</label>
     <label class="check"><input type="checkbox" id="opt-cardinal" checked /> 方位标记</label>
     <label class="check"><input type="checkbox" id="opt-azimuth" /> 方位角线</label>
     <label class="check"><input type="checkbox" id="opt-altitude" /> 高度角线</label>
     <label class="check"><input type="checkbox" id="opt-horizon" checked /> 地景</label>
-  </section>
+    <label class="check"><input type="checkbox" id="opt-autoconstellation" checked /> 随焦点显示星座</label>
 
-  <!-- 右侧：星座与行星 -->
-  <section id="sidebar" class="panel">
-    <h2>星座</h2>
+    <h3>星座</h3>
     <input type="search" id="constellation-search" placeholder="搜索星座（如 Ori / Eagle）" />
     <ul id="constellation-list" class="list"></ul>
     <div class="sidebar-actions">
       <button id="btn-hide-constellations">清除全部</button>
     </div>
 
-    <h2>行星可见性</h2>
+    <h3>行星可见性</h3>
     <ul id="planet-list" class="list compact"></ul>
+  </aside>
+
+  <!-- 选中天体详情 -->
+  <section id="object-info" class="panel hidden">
+    <div class="panel-head">
+      <h2 id="object-title">天体</h2>
+      <button class="close-btn" data-close="object-info">✕</button>
+    </div>
+    <div id="object-body"></div>
+    <div class="object-actions">
+      <button id="btn-follow">跟踪该天体</button>
+      <button id="btn-unfollow" class="hidden">停止跟踪</button>
+    </div>
   </section>
 
-  <!-- 底部：时间控制 -->
-  <section id="timebar" class="panel">
-    <button id="btn-play" class="primary">▶ 播放</button>
-    <div id="speeds" class="speeds"></div>
+  <!-- 底部：时间与地点 -->
+  <footer id="bottombar" class="bar">
+    <button id="btn-play" class="primary" title="播放/暂停">▶</button>
+    <div class="group">
+      <button data-step="-86400000" title="后退一天">−1天</button>
+      <button data-step="-3600000" title="后退一小时">−1时</button>
+      <button data-step="-600000" title="后退十分钟">−10分</button>
+      <button data-step="600000" title="前进十分钟">+10分</button>
+      <button data-step="3600000" title="前进一小时">+1时</button>
+      <button data-step="86400000" title="前进一天">+1天</button>
+    </div>
+    <input type="datetime-local" id="time-input" step="1" title="跳转到指定时间" />
     <button id="btn-now">现在</button>
+    <div id="speeds" class="group speeds"></div>
     <select id="observer-preset" title="观测地点">
       <option value="121.4737,31.2304|上海">上海</option>
       <option value="116.4074,39.9042|北京">北京</option>
@@ -56,10 +108,10 @@
       <option value="139.6917,35.6895|东京">东京</option>
       <option value="151.2093,-33.8688|悉尼">悉尼</option>
     </select>
-  </section>
+  </footer>
 
-  <!-- 底部中央：点击读经纬度 -->
-  <div id="readout" class="panel hidden"></div>
+  <!-- 点击读经纬度 -->
+  <div id="readout" class="hidden"></div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
