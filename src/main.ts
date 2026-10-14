@@ -354,7 +354,14 @@ function reconcileConstellations(): void {
   }
   for (const id of desired) {
     if (!appliedConstellations.has(id)) {
-      engine.solarSystem.constellations.show({ id, showLabel: true, allowClose: true });
+      // Note: engine anchor dots use a fixed radius regardless of magnitude,
+      // so rely on the real stars (which are magnitude-scaled) instead.
+      engine.solarSystem.constellations.show({
+        id,
+        showLabel: true,
+        allowClose: true,
+        showStars: false,
+      });
     }
   }
   appliedConstellations = desired;
@@ -1073,19 +1080,17 @@ function enlargePlanets(): void {
 }
 
 // Give bright stars noticeably more intensity than faint ones (the engine
-// renders every star with the same brightness by default).
+// renders every star with the same brightness by default). Continuous curve:
+// t = 0 at mag 6.5 (faintest) .. 1 at mag -1.5 (brightest).
 function enhanceStarContrast(): void {
-  const bright: Array<string | number> = [];
-  const medium: Array<string | number> = [];
-  const faint: Array<string | number> = [];
   for (const star of engine.solarSystem.stars.find()) {
-    if (star.magnitude <= 1.5) bright.push(star.id);
-    else if (star.magnitude <= 3) medium.push(star.id);
-    else faint.push(star.id);
+    const t = Math.min(1, Math.max(0, (6.5 - star.magnitude) / 8));
+    engine.solarSystem.star.update({
+      id: star.id,
+      brightnessFactor: 1 + 6 * t * t,
+      sizeFactor: 0.85 + 0.8 * Math.pow(t, 1.5),
+    });
   }
-  if (bright.length) engine.solarSystem.star.update({ ids: bright, brightnessFactor: 4.5, sizeFactor: 1.35 });
-  if (medium.length) engine.solarSystem.star.update({ ids: medium, brightnessFactor: 2.1, sizeFactor: 1.1 });
-  if (faint.length) engine.solarSystem.star.update({ ids: faint, brightnessFactor: 1, sizeFactor: 0.85 });
 }
 
 // ---------------------------------------------------------------------------
