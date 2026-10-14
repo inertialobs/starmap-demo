@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>实时星图 · Real-time Star Map</title>
+</head>
+<body>
+  <canvas id="starmap-canvas"></canvas>
+
+  <div id="loading">正在初始化星图…</div>
+
+  <!-- 左上：时间与观测者信息 -->
+  <section id="info" class="panel">
+    <h1>实时星图</h1>
+    <div class="row"><span>模拟时间</span><strong id="sim-time">--</strong></div>
+    <div class="row"><span>观测地点</span><strong id="observer-label">--</strong></div>
+    <div class="row"><span>经纬度</span><span id="observer-coords">--</span></div>
+  </section>
+
+  <!-- 右上：显示设置 -->
+  <section id="settings" class="panel">
+    <h2>显示设置</h2>
+    <label class="check"><input type="checkbox" id="opt-milkyway" checked /> 银河</label>
+    <label class="check"><input type="checkbox" id="opt-cardinal" checked /> 方位标记</label>
+    <label class="check"><input type="checkbox" id="opt-azimuth" /> 方位角线</label>
+    <label class="check"><input type="checkbox" id="opt-altitude" /> 高度角线</label>
+    <label class="check"><input type="checkbox" id="opt-horizon" checked /> 地景</label>
+  </section>
+
+  <!-- 右侧：星座与行星 -->
+  <section id="sidebar" class="panel">
+    <h2>星座</h2>
+    <input type="search" id="constellation-search" placeholder="搜索星座（如 Ori / Eagle）" />
+    <ul id="constellation-list" class="list"></ul>
+    <div class="sidebar-actions">
+      <button id="btn-hide-constellations">清除全部</button>
+    </div>
+
+    <h2>行星可见性</h2>
+    <ul id="planet-list" class="list compact"></ul>
+  </section>
+
+  <!-- 底部：时间控制 -->
+  <section id="timebar" class="panel">
+    <button id="btn-play" class="primary">▶ 播放</button>
+    <div id="speeds" class="speeds"></div>
+    <button id="btn-now">现在</button>
+    <select id="observer-preset" title="观测地点">
+      <option value="121.4737,31.2304|上海">上海</option>
+      <option value="116.4074,39.9042|北京">北京</option>
+      <option value="113.2644,23.1291|广州">广州</option>
+      <option value="114.1694,22.3193|香港">香港</option>
+      <option value="-74.0060,40.7128|纽约">纽约</option>
+      <option value="-0.1276,51.5074|伦敦">伦敦</option>
+      <option value="139.6917,35.6895|东京">东京</option>
+      <option value="151.2093,-33.8688|悉尼">悉尼</option>
+    </select>
+  </section>
+
+  <!-- 底部中央：点击读经纬度 -->
+  <div id="readout" class="panel hidden"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
